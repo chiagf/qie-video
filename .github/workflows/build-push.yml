@@ -27,6 +27,11 @@ jobs:
         with:
           python-version: "3.10"
 
+      # The suites are CPU-only and torch-free. Pillow backs the blend interpolator tests;
+      # gradio lets the app suite import video_ui for real, which the AST check cannot do.
+      - name: Install test deps (no torch)
+        run: pip install pillow "gradio==6.20.0"
+
       - name: Engine tests (CPU-only, no torch)
         working-directory: vendor/qie-engine
         run: python -m unittest discover -s tests -v
