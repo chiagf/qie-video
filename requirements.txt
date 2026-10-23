@@ -1,0 +1,27 @@
+# qie-video engine pins. The GHCR image installs this verbatim.
+# torch 2.9.1 / cu128 runs the Wan2.2 fp8+MMDiT stack on sm_89 (4090) and sm_120 (Blackwell);
+# diffusers 0.41.0 ships WanImageToVideoPipeline with the two-expert (transformer_2) loading.
+# transformers must be 5.x: every 4.x caps huggingface-hub<1.0 and gradio 6.x needs >=1.2.
+torch==2.9.1
+diffusers==0.41.0
+transformers==5.20.1
+accelerate
+peft
+safetensors
+sentencepiece
+torchvision==0.24.1
+torchao
+gradio==6.20.0
+huggingface_hub
+hf_xet
+pillow
+numpy
+requests
+fastapi
+uvicorn
+# export_to_video writes through imageio; ffmpeg is the codec backend.
+imageio
+imageio-ffmpeg
+# The "use current frame as input" grab pulls a frame out of the rendered mp4.
+opencv-python-headless
+# No `spaces` pin: this image is Vast/RunPod only, and the engine never imports it.

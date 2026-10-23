@@ -1,0 +1,14 @@
+.git
+.github
+.gitignore
+.gitattributes
+.gitmodules
+tests
+__pycache__
+*.pyc
+out
+data
+hf
+rife
+*.mp4
+*.log

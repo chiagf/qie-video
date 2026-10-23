@@ -1,0 +1,6 @@
+[submodule "qie_engine"]
+	path = qie_engine
+	url = https://github.com/chiagf/qie-engine.git
+[submodule "vendor/qie-engine"]
+	path = vendor/qie-engine
+	url = https://github.com/chiagf/qie-engine.git
