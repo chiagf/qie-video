@@ -100,6 +100,19 @@ def _paths(store) -> list[str]:
     return [entry.path for entry in store.items()]
 
 
+def _boot_banner(engine) -> str:
+    """Live boot state for the header. The old static check ran once at build time, before the
+    background loader had produced any error to show."""
+    if engine.loaded:
+        return ""
+    if engine.error:
+        return f"**model error** (retrying in the background): `{engine.error}`"
+    return (
+        "**model loading** - the first boot downloads ~45 GB into /data/hf; "
+        "Generate is disabled until it finishes."
+    )
+
+
 def _render(engine, store, cfg, first, last, prompt, duration, steps, guidance, guidance_2,
             negative, seed, randomize, scheduler, flow_shift, fluidity, quality,
             progress=gr.Progress()):
@@ -158,8 +171,8 @@ def build(engine, store, cfg: Config) -> gr.Blocks:
             f" {cfg.wan.scheduler} scheduler). Upload a frame to start from (optionally one to"
             " end on), describe the motion, get an mp4. Click a clip in Session to keep going."
         )
-        if engine.error:
-            gr.Markdown(f"**model error:** `{engine.error}`")
+        boot_status = gr.Markdown(_boot_banner(engine))
+        demo.load(lambda: _boot_banner(engine), None, boot_status)
 
         with gr.Row():
             with gr.Column(scale=3):

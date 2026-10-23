@@ -306,6 +306,19 @@ class TestClipStore(unittest.TestCase):
             self.assertEqual(entry.prompt, "pan left")
             self.assertEqual(entry.seed, 7)
 
+    def test_evicted_clip_files_are_deleted_from_disk(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            box = store.ClipStore(tmp, max_history=1)
+            source = pathlib.Path(tmp) / "render.mp4"
+            source.write_bytes(b"mp4")
+            first = box.register_clip(str(source), name="one.mp4", prompt="a", seed=1)
+            source.write_bytes(b"mp4")
+            second = box.register_clip(str(source), name="two.mp4", prompt="b", seed=2)
+            # Eviction must free the disk too, not just the list - /data/out used to grow
+            # one clip per render forever.
+            self.assertFalse(pathlib.Path(first.path).exists())
+            self.assertTrue(pathlib.Path(second.path).exists())
+
     def test_register_clip_requires_existing_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(ValueError):

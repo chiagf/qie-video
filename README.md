@@ -29,7 +29,7 @@ Pull the image:
 ghcr.io/chiagf/qie-video:latest
 ```
 
-Instance: **RTX 4090 48 GB** (or any CUDA card with ~48 GB), `--disk >= 50` (60 recommended).
+Instance: **RTX 4090 48 GB** (or any CUDA card with ~48 GB), `--disk >= 60`.
 Port **7860**.
 
 Environment:
@@ -43,18 +43,77 @@ Environment:
 
 Weights download on first boot into `/data/hf` (~45 GB). Give the instance 60 GB of disk.
 
+### Rent from the saved Vast template
+
+A private template on this account already pins the image, port, auth and offer filter:
+
+| | |
+| --- | --- |
+| name | `QIE Video bb05d82` |
+| id | `776154` |
+| hash | `8952e974d4032724394895c47915e69b` |
+| disk | 60 GB |
+| env | `-e OPEN_BUTTON_PORT=7860 -e QIE_AUTH=vast:CHANGEME -p 7860:7860` |
+
+Find an offer with the template's own filter, then rent against the hash:
+
+```
+vastai search offers 'compute_cap>=890 cpu_arch in ["amd64"] gpu_ram>=40 gpu_total_ram>=40 disk_space>=60 num_gpus in ["1"] rentable=true inet_down>=500' -o dph
+vastai create instance <OFFER_ID> --template_hash 8952e974d4032724394895c47915e69b --disk 60
+```
+
+Replace the password when you rent (`--env` replaces the template's, so pass all three):
+
+```
+vastai create instance <OFFER_ID> --template_hash 8952e974d4032724394895c47915e69b --disk 60 --env '-e OPEN_BUTTON_PORT=7860 -e QIE_AUTH=vast:REALPASS -p 7860:7860'
+```
+
+`HF_TOKEN` is **not** in the template (templates are shareable). It already exists at the account
+level, so every instance picks it up: `vastai show env-vars`.
+
+Filter notes, all verified against the live marketplace:
+
+- `compute_cap>=1200` (the longcat default) is Blackwell-only and **excludes every RTX 4090**
+  (4090 = sm_89 = compute_cap 890). `>=890` is Ada-and-newer, which includes it and gives native fp8.
+- `gpu_ram` is compared in **gigabytes** - `gpu_ram>=40000` matches nothing, `gpu_ram>=40` is right.
+- There is **no working host-RAM filter** (`ram>=64`, `ram>=65536`, `cpu_ram>=65536` all return 0).
+  Read the RAM column instead; the median on this filter is ~128 GB.
+- `disk_space>=60` matters: without it the cheapest offer had only 36.6 GB free, which cannot hold
+  the ~45 GB of weights. With it, every offer has >= 87 GB.
+
+Rebuild the template whenever the image pin moves (the script lives one level up, next to the
+longcat one, and refuses to save a filter that matches 0 offers):
+
+```
+.\create_vast_video_template.ps1 -Tag <new-sha>
+```
+
 ### What fits
 
 At the default 480x832 / ~81 frames the denoise peak is **~33 GiB**, so a 48 GB card runs it
 without offloading. 720x1280 at 81 frames needs `QIE_WAN_OFFLOAD=model_cpu`.
 
+Host RAM matters too: building both experts at load peaks near **48 GB** (fp8). Rent a box with
+**64 GB or more**; a host below the limit now refuses to start with a readable error instead of
+being silently OOM-killed.
+
 ### Check it came up
 
 ```
-curl http://<host>:7860/health      # {"ok": true, "mode": "video", ...}
+curl http://<host>:7860/health      # {"ok": true, "state": "ready", "attempts": 1, ...}
 curl http://<host>:7860/status      # gpu + engine + rife
 curl http://<host>:7860/video-config
 ```
+
+The server answers `/health` from the first second, while the ~45 GB download is still
+running: `state` is `loading` until the weights land, then `ready`. `/health` is the one route
+exempt from `QIE_AUTH` (it reports state only, no secrets) so this command works with the gate on.
+
+If a load attempt fails (network blip, disk too small) the log shows
+`load attempt N failed: ... - retrying in 15s` and it keeps trying every 15-120 s.
+**Restart the container in place, don't recreate the instance** - `/data/hf` survives a restart
+and resumes the download; a fresh instance starts the 45 GB over. The last real reason is in
+`/health` as `boot_error`.
 
 ## Env vars
 
@@ -69,6 +128,8 @@ curl http://<host>:7860/video-config
 | `QIE_WAN_FLUIDITY` | `1` | `1` \| `2` \| `4` \| `8` (RIFE) |
 | `QIE_WAN_RIFE_ENABLED` | `on` | off = never interpolate |
 | `QIE_WAN_LORA_ENABLED` | `on` | lightx2v Lightning pair |
+| `QIE_WAN_STACK` | `download` | `baked` = load from `/models` in a weights-baked image |
+| `QIE_WAN_LORA` | `lightx2v/Wan2.2-Lightning` | HF repo, or `/models/lora` when `QIE_WAN_STACK=baked` |
 | `QIE_VLM` | `on` | `off` = template prompts only |
 | `QIE_VLM_MODEL` | `Qwen/Qwen2.5-VL-72B-Instruct` | vision model for Rewrite / Next Segment |
 
@@ -81,6 +142,12 @@ docker run --gpus all -p 7860:7860 -v qie-data:/data -e HF_TOKEN=hf_xxx qie-vide
 
 The `qie_engine` submodule must be checked out (`git clone --recurse-submodules`, or
 `git submodule update --init`). The Dockerfile pip-installs it into the image.
+
+Weights are left out of that build: the first boot downloads ~28 GB of experts into `/data/hf`. To
+bake them into the image instead — and skip that download — follow
+[BAKE-WEIGHTS.md](BAKE-WEIGHTS.md), which builds a `:weights` base image plus a `:baked` app image.
+That build is too big for GitHub Actions (~62 GB needed, a free runner has ~44 GB), so it runs on
+your own machine.
 
 ## Tests
 

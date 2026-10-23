@@ -77,7 +77,15 @@ class ClipStore:
             ts=time.time(),
         )
         self._items.insert(0, entry)
+        # History is capped in memory AND on disk: the eviction used to drop the reference
+        # only, so /data/out grew one clip per render forever.
+        evicted = self._items[self.max :]
         del self._items[self.max :]
+        for old in evicted:
+            try:
+                Path(old.path).unlink(missing_ok=True)
+            except OSError:  # noqa: BLE001 - a clip we cannot delete is not worth failing for
+                pass
         return entry
 
     def items(self) -> list[Entry]:

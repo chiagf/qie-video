@@ -5,7 +5,7 @@
 #
 # Run (needs NVIDIA Container Toolkit / a GPU host, e.g. Vast or RunPod):
 #   docker run --gpus all -p 7860:7860 -v qie-data:/data -e HF_TOKEN=hf_xxx qie-video
-#   # optional: -e QIE_AUTH=user:pass   (HTTP Basic gate over every route, for open ports)
+#   # optional: -e QIE_AUTH=user:pass   (HTTP Basic gate over every route except /health)
 #   # optional: -e QIE_WAN_OFFLOAD=model_cpu   (headroom on a tight card)
 #
 # Weights are NOT baked: the first boot pulls ~45 GB into /data/hf (Wan2.2 fp8 experts +
@@ -41,5 +41,11 @@ ENV PYTHONUNBUFFERED=1 \
     HF_XET_HIGH_PERFORMANCE=1
 
 EXPOSE 7860
+
+# Server liveness, not model readiness: weights load in the background, so /health answers
+# from the first second (state: loading | ready) and a stuck process is visible as unhealthy.
+# slim has no curl - probe with the Python that is already there; PORT matches app.py.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=300s --retries=3 \
+    CMD python -c "import os,urllib.request,sys; p=os.environ.get('PORT') or os.environ.get('GRADIO_SERVER_PORT') or '7860'; sys.exit(0 if urllib.request.urlopen(f'http://127.0.0.1:{p}/health', timeout=8).status==200 else 1)"
 
 CMD ["python", "app.py"]

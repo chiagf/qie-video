@@ -13,6 +13,8 @@ from __future__ import annotations
 import base64
 import os
 import secrets
+import shutil
+import threading
 import time
 import traceback
 
@@ -27,14 +29,47 @@ from qie_engine import WanEngine, gpu_info, wan_memory_plan
 from store import ClipStore
 
 BOOT_ERROR = ""
+BOOT_ATTEMPTS = 0
 BOOTED_AT = time.time()
 
 engine = WanEngine(CONFIG.wan)
 store = ClipStore(CONFIG.out_dir, CONFIG.max_history)
 
-# Load before serving: the weights are ~45 GB and the first request would otherwise time out.
+
+def _load_loop() -> None:
+    """Build the weights in the background so port 7860 answers from the first second.
+
+    One transient failure (network blip, rate limit, a disk that was too small) must not brick
+    a rented box: retry forever with capped backoff. The HF cache resumes partial downloads,
+    so each attempt is cheaper than the one before it.
+    """
+    global BOOT_ERROR, BOOT_ATTEMPTS
+    delay = 15.0
+    while True:
+        BOOT_ATTEMPTS += 1
+        error = engine.load()
+        if error is None:
+            BOOT_ERROR = ""
+            print(f"[qie-video] weights ready after {BOOT_ATTEMPTS} attempt(s)", flush=True)
+            return
+        BOOT_ERROR = error
+        print(
+            f"[qie-video] load attempt {BOOT_ATTEMPTS} failed: {error} - retrying in {delay:.0f}s",
+            flush=True,
+        )
+        time.sleep(delay)
+        delay = min(delay * 2, 120.0)
+
+
+# Weights are ~45 GB; loading happens beside the server instead of blocking it, so /health can
+# report loading vs failed vs ready and a blip during the download heals itself.
 if CONFIG.preload:
-    BOOT_ERROR = engine.load() or ""
+    print(
+        "[qie-video] loading weights in the background (first boot pulls ~45 GB, 20-40 min) - "
+        "the UI is up now, Generate unlocks when it finishes",
+        flush=True,
+    )
+    threading.Thread(target=_load_loop, name="wan-load", daemon=True).start()
 
 
 app = FastAPI(title="qie-video")
@@ -45,6 +80,10 @@ if CONFIG.auth and ":" in CONFIG.auth:
 
     @app.middleware("http")
     async def _basic_auth(request: Request, call_next):
+        if request.url.path == "/health":
+            # Liveness probe: state only, no secrets - so monitors and README's curl keep
+            # working while QIE_AUTH gates every other route.
+            return await call_next(request)
         header = request.headers.get("authorization", "")
         if header.startswith("Basic "):
             try:
@@ -57,11 +96,20 @@ if CONFIG.auth and ":" in CONFIG.auth:
 
 @app.get("/health")
 def health():
+    if engine.loaded:
+        state = "ready"
+    elif CONFIG.preload:
+        state = "loading"
+    else:
+        state = "unloaded"
     return {
         "ok": engine.loaded,
         "mode": CONFIG.mode,
+        "state": state,
+        "attempts": BOOT_ATTEMPTS,
         "boot_error": BOOT_ERROR,
         "uptime_s": round(time.time() - BOOTED_AT, 1),
+        "disk_free_gb": round(shutil.disk_usage(store.root).free / 2**30, 1),
         "session": len(store),
     }
 
